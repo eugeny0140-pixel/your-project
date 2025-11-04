@@ -3,3 +3,4 @@ beautifulsoup4==4.12.3
 deep-translator==1.11.4
 schedule==1.2.1
 psycopg2-binary==2.9.9
+lxml==4.9.3
