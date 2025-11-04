@@ -11,6 +11,7 @@ import schedule
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 import html
+import traceback
 from db_supabase import is_seen, mark_seen
 from lxml import etree
 
@@ -62,7 +63,7 @@ HTML_SOURCES = [
     {"n": "E3G", "u": "https://www.e3g.org/news/", "s": "h3.post-title a", "b": "https://www.e3g.org"},
 ]
 
-# 🔥 Расширенные ключевые слова (включая всё, что вы просили)
+# 🔥 Расширенные ключевые слова
 KEYWORDS = [
    r"\brussia\b", r"\brussian\b", r"\bputin\b", r"\bmoscow\b", r"\bkremlin\b",
    r"\bukraine\b", r"\bukrainian\b", r"\bzelensky\b", r"\bkyiv\b", r"\bkiev\b",
@@ -85,38 +86,15 @@ KEYWORDS = [
    r"\bсанкции\b", r"\bsanctions\b", r"\bоружие\b", r"\bweapons\b",
    r"\bпоставки\b", r"\bsupplies\b", r"\bhimars\b", r"\batacms\b",
    r"\bhour ago\b", r"\bчас назад\b", r"\bminutos atrás\b", r"\b小时前\b",
-   # === Криптовалюта (топ-20 + CBDC, DeFi, регуляция) ===
+   # === Криптовалюта ===
    r"\bbitcoin\b", r"\bbtc\b", r"\bбиткоин\b", r"\b比特币\b",
    r"\bethereum\b", r"\beth\b", r"\bэфир\b", r"\b以太坊\b",
-   r"\bbinance coin\b", r"\bbnb\b", r"\busdt\b", r"\btether\b",
-   r"\bxrp\b", r"\bripple\b", r"\bcardano\b", r"\bada\b",
-   r"\bsolana\b", r"\bsol\b", r"\bdoge\b", r"\bdogecoin\b",
-   r"\bavalanche\b", r"\bavax\b", r"\bpolkadot\b", r"\bdot\b",
-   r"\bchainlink\b", r"\blink\b", r"\btron\b", r"\btrx\b",
-   r"\bcbdc\b", r"\bcentral bank digital currency\b", r"\bцифровой рубль\b",
-   r"\bdigital yuan\b", r"\beuro digital\b", r"\bdefi\b", r"\bдецентрализованные финансы\b",
-   r"\bnft\b", r"\bnon-fungible token\b", r"\bsec\b", r"\bцб рф\b",
-   r"\bрегуляция\b", r"\bregulation\b", r"\bзапрет\b", r"\bban\b",
-   r"\bмайнинг\b", r"\bmining\b", r"\bhalving\b", r"\bхалвинг\b",
-   r"\bволатильность\b", r"\bvolatility\b", r"\bcrash\b", r"\bкрах\b",
-   r"\b刚刚\b", r"\bدقائق مضت\b",
-   # === Пандемия и болезни (включая биобезопасность) ===
+   r"\bnft\b", r"\bnon-fungible token\b", r"\bcbdc\b", r"\bcrypto\b",
+   # === Пандемия и болезни ===
    r"\bpandemic\b", r"\bпандемия\b", r"\b疫情\b", r"\bجائحة\b",
-   r"\boutbreak\b", r"\bвспышка\b", r"\bэпидемия\b", r"\bepidemic\b",
    r"\bvirus\b", r"\bвирус\b", r"\bвирусы\b", r"\b变异株\b",
    r"\bvaccine\b", r"\bвакцина\b", r"\b疫苗\b", r"\bلقاح\b",
-   r"\bbooster\b", r"\bбустер\b", r"\bревакцинация\b",
-   r"\bquarantine\b", r"\bкарантин\b", r"\b隔离\b", r"\bحجر صحي\b",
-   r"\blockdown\b", r"\bлокдаун\b", r"\b封锁\b",
-   r"\bmutation\b", r"\bмутация\b", r"\b变异\b",
-   r"\bstrain\b", r"\bштамм\b", r"\bomicron\b", r"\bdelta\b",
-   r"\bbiosafety\b", r"\bбиобезопасность\b", r"\b生物安全\b",
-   r"\blab leak\b", r"\bлабораторная утечка\b", r"\b实验室泄漏\b",
-   r"\bgain of function\b", r"\bусиление функции\b",
-   r"\bwho\b", r"\bвоз\b", r"\bcdc\b", r"\bроспотребнадзор\b",
-   r"\binfection rate\b", r"\bзаразность\b", r"\b死亡率\b",
-   r"\bhospitalization\b", r"\bгоспитализация\b",
-   r"\bقبل ساعات\b", r"\b刚刚报告\b"
+   r"\boutbreak\b", r"\bвспышка\b", r"\bэпидемия\b", r"\bepidemic\b",
 ]
 
 MAX_PER_RUN = 15
@@ -159,63 +137,63 @@ def get_source_prefix(name):
             return mapping[key]
     return name.split()[0].lower()
 
-def fetch_rss_news():
+def fetch_news():
+    """
+    Основная функция для сбора новостей из RSS и HTML источников.
+    Возвращает список релевантных новостей, отформатированных для отправки в Telegram.
+    """
     result = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
 
+    # === 1. Обработка RSS-источников ===
     for src in RSS_SOURCES:
         if len(result) >= MAX_PER_RUN:
             break
         try:
             url = src["url"].strip()
             log.info(f"📡 RSS {src['name']}: {url}")
-            resp = requests.get(url, headers=headers, timeout=15)
-            
-            # Используем lxml вместо feedparser
-            from lxml import etree
-            parser = etree.XMLParser(recover=True)  # recover=True помогает при некорректных XML
-            tree = etree.fromstring(resp.content, parser)
-            
-            # Ищем все элементы item
-            items = tree.xpath('//item')
-            if not items:  # Попробуем альтернативный путь для некоторых RSS
-                items = tree.xpath('//entry')
-            
-            for item in items[:10]:
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:15]:
                 if len(result) >= MAX_PER_RUN:
                     break
                 
-                title = clean_text(item.findtext('title') or '')
-                link = clean_text(item.findtext('link') or item.findtext('guid') or '')
-                
+                title = clean_text(entry.get("title", ""))
+                link = clean_text(entry.get("link", ""))
                 if not title or not link:
                     continue
                 
+                # Проверяем, не отправляли ли мы уже эту новость
                 if is_seen(link, title):
+                    log.debug(f"📰 Пропускаем уже отправленную новость: {title}")
                     continue
                 
+                # Фильтрация по ключевым словам
                 if not any(re.search(kw, title, re.IGNORECASE) for kw in KEYWORDS):
                     continue
                 
-                # Извлекаем описание
-                description = clean_text(item.findtext('description') or '')
-                if not description:
-                    content = item.find('content:encoded', namespaces={'content': 'http://purl.org/rss/1.0/modules/content/'})
-                    if content is not None:
-                        description = clean_text(content.text or '')
-                
-                lead = (description or title).strip()
+                # Извлекаем лид
+                desc = clean_text(entry.get("summary", ""))
+                content = clean_text(
+                    entry.get("content", [{}])[0].get("value", "") if entry.get("content") else ""
+                )
+                lead = (desc or content or "").strip()
                 if not lead:
-                    continue
+                    lead = title
                 
-                # Ограничение на длину
+                # Ограничиваем лид двумя предложениями
                 sentences = re.split(r'(?<=[.!?])\s+', lead)
-                lead = ' '.join(sentences[:2]).rstrip() + ("…" if len(sentences) > 2 else "")
+                if len(sentences) > 2:
+                    lead = ' '.join(sentences[:2]).rstrip() + "…"
+                else:
+                    lead = lead.rstrip()
                 
+                # Переводим на русский
                 ru_title = translate_to_russian(title)
                 ru_lead = translate_to_russian(lead)
+                
+                # Формируем сообщение
                 prefix = get_source_prefix(src["name"]).upper()
                 safe_prefix = html.escape(prefix)
                 safe_title = html.escape(ru_title)
@@ -224,10 +202,11 @@ def fetch_rss_news():
                 
                 msg = f"<b>{safe_prefix}</b>: {safe_title}\n\n{safe_lead}\n\nИсточник: {safe_link}"
                 result.append({"msg": msg, "link": link, "title": title})
+                log.info(f"✅ Найдена релевантная новость из {src['name']}: {title[:50]}...")
+                
         except Exception as e:
-            log.error(f"❌ RSS {src['name']}: {e}")
-
-    return result
+            log.error(f"❌ Ошибка при обработке RSS {src['name']}: {e}")
+            log.error(traceback.format_exc())
 
     # === 2. Обработка HTML-источников ===
     for src in HTML_SOURCES:
@@ -238,13 +217,16 @@ def fetch_rss_news():
             page_url = src["u"].strip()
             selector = src["s"]
             log.info(f"🌐 HTML {src['n']}: {page_url}")
-            resp = requests.get(page_url, headers=headers, timeout=15)
+            
+            resp = requests.get(page_url, headers=headers, timeout=20)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.content, "html.parser")
             items = soup.select(selector)
-            for item in items[:10]:
+            
+            for item in items[:15]:
                 if len(result) >= MAX_PER_RUN:
                     break
+                
                 a_tag = item if item.name == 'a' else item.find('a')
                 if not a_tag or not a_tag.get_text(strip=True) or not a_tag.get('href'):
                     continue
@@ -252,20 +234,29 @@ def fetch_rss_news():
                 link = a_tag['href'].strip()
                 title = clean_text(a_tag.get_text())
                 
+                # Нормализуем URL
                 if link.startswith('/'):
                     link = base_url + link
                 elif not link.startswith('http'):
                     continue
                 
-                if not title or is_seen(link, title):
+                if not title:
                     continue
                 
+                # Проверяем, не отправляли ли мы уже эту новость
+                if is_seen(link, title):
+                    log.debug(f"📰 Пропускаем уже отправленную новость: {title}")
+                    continue
+                
+                # Фильтрация по ключевым словам
                 if not any(re.search(kw, title, re.IGNORECASE) for kw in KEYWORDS):
                     continue
                 
+                # Для HTML-источников используем заголовок как лид
                 ru_title = translate_to_russian(title)
-                ru_lead = ru_title  # Для HTML-источников используем заголовок как лид
+                ru_lead = ru_title
                 
+                # Формируем сообщение
                 safe_prefix = html.escape(src["n"])
                 safe_title = html.escape(ru_title)
                 safe_lead = html.escape(ru_lead)
@@ -273,8 +264,11 @@ def fetch_rss_news():
                 
                 msg = f"<b>{safe_prefix}</b>: {safe_title}\n\n{safe_lead}\n\nИсточник: {safe_link}"
                 result.append({"msg": msg, "link": link, "title": title})
+                log.info(f"✅ Найдена релевантная новость из {src['n']}: {title[:50]}...")
+                
         except Exception as e:
-            log.error(f"❌ HTML {src['n']}: {e}")
+            log.error(f"❌ Ошибка при обработке HTML {src['n']}: {e}")
+            log.error(traceback.format_exc())
 
     return result
 
@@ -289,52 +283,75 @@ def send_to_telegram(text):
     try:
         r = requests.post(url, data=payload, timeout=15)
         if r.status_code == 200:
-            log.info("✅ Отправлено")
+            log.info("✅ Отправлено в Telegram")
+            return True
         else:
             log.error(f"❌ Telegram error: {r.status_code} {r.text}")
+            return False
     except Exception as e:
-        log.error(f"❌ Исключение при отправке: {e}")
+        log.error(f"❌ Исключение при отправке в Telegram: {e}")
+        return False
 
 def job_main():
     try:
-        log.info("🔄 Основная проверка новостей...")
+        log.info("🔄 Запуск основной проверки новостей...")
         news = fetch_news()
         if not news:
-            log.info("📭 Нет релевантных новостей.")
+            log.info("📭 Нет релевантных новостей для отправки.")
             return
-        for item in news:
-            send_to_telegram(item["msg"])
-            mark_seen(item["link"], item["title"])
-            time.sleep(2)
+        
+        log.info(f"📬 Найдено {len(news)} релевантных новостей для отправки")
+        
+        for i, item in enumerate(news, 1):
+            log.info(f"📤 Отправка новости {i}/{len(news)}")
+            if send_to_telegram(item["msg"]):
+                mark_seen(item["link"], item["title"])
+                log.info(f"✅ Новость успешно отправлена и сохранена: {item['title'][:50]}...")
+            else:
+                log.warning(f"⚠️ Не удалось отправить новость: {item['title'][:50]}...")
+            time.sleep(2)  # Задержка между отправками
+            
     except Exception as e:
-        log.exception("🚨 Критическая ошибка в job_main")
+        log.error("🚨 Критическая ошибка в job_main")
+        log.error(traceback.format_exc())
 
 def job_keepalive():
-    log.info("💤 Keep-alive check")
+    log.info("💤 Keep-alive check: сервис работает")
 
 # ================== HTTP сервер для Render ==================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b"OK")
+        self.wfile.write(b"OK - Bot is running")
+    
     def log_message(self, format, *args):
         pass
 
 def start_server():
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    log.info(f"🌐 HTTP сервер запущен на порту {port} для Render health checks")
     server.serve_forever()
 
 # ================== MAIN ==================
 if __name__ == "__main__":
-    threading.Thread(target=start_server, daemon=True).start()
-    log.info("🚀 Бот запущен. Проверка каждые 14 минут.")
-
+    # Запускаем HTTP сервер в отдельном потоке
+    server_thread = threading.Thread(target=start_server, daemon=True)
+    server_thread.start()
+    
+    log.info("🚀 Бот запущен. Первый запуск немедленно...")
+    
+    # Первый запуск немедленно
     job_main()
+    
+    # Планируем регулярные проверки
     schedule.every(14).minutes.do(job_main)
     schedule.every(10).minutes.do(job_keepalive)
-
+    
+    log.info("⏰ Планировщик запущен. Проверка каждые 14 минут, keep-alive каждые 10 минут")
+    
     while True:
         schedule.run_pending()
         time.sleep(1)
