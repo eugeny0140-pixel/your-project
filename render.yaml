@@ -1,7 +1,11 @@
 services:
   - type: web
-    name: telegram-news-bot
-    runtime: python
+    name: news-bot
+    env: python
+    plan: free
+    region: frankfurt
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python bot.py"
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
@@ -9,9 +13,5 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python bot.py"
-    env: python
-    plan: free
     healthCheckPath: /
-    branch: main
+    healthCheckInterval: 300
