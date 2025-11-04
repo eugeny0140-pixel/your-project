@@ -12,6 +12,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 import html
 from db_supabase import is_seen, mark_seen
+from lxml import etree
 
 # ================== НАСТРОЙКИ ==================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -158,43 +159,60 @@ def get_source_prefix(name):
             return mapping[key]
     return name.split()[0].lower()
 
-def fetch_news():
+def fetch_rss_news():
     result = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
 
-    # === 1. Обработка RSS-источников ===
     for src in RSS_SOURCES:
         if len(result) >= MAX_PER_RUN:
             break
         try:
             url = src["url"].strip()
             log.info(f"📡 RSS {src['name']}: {url}")
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:10]:
+            resp = requests.get(url, headers=headers, timeout=15)
+            
+            # Используем lxml вместо feedparser
+            from lxml import etree
+            parser = etree.XMLParser(recover=True)  # recover=True помогает при некорректных XML
+            tree = etree.fromstring(resp.content, parser)
+            
+            # Ищем все элементы item
+            items = tree.xpath('//item')
+            if not items:  # Попробуем альтернативный путь для некоторых RSS
+                items = tree.xpath('//entry')
+            
+            for item in items[:10]:
                 if len(result) >= MAX_PER_RUN:
                     break
-                title = clean_text(entry.get("title", ""))
-                link = clean_text(entry.get("link", ""))
-                if not title or not link or is_seen(link, title):
+                
+                title = clean_text(item.findtext('title') or '')
+                link = clean_text(item.findtext('link') or item.findtext('guid') or '')
+                
+                if not title or not link:
                     continue
+                
+                if is_seen(link, title):
+                    continue
+                
                 if not any(re.search(kw, title, re.IGNORECASE) for kw in KEYWORDS):
                     continue
                 
-                desc = clean_text(entry.get("summary", ""))
-                content = clean_text(
-                    entry.get("content", [{}])[0].get("value", "") if entry.get("content") else ""
-                )
-                lead = (desc or content or "").strip()
-                if not lead:
-                    lead = title
+                # Извлекаем описание
+                description = clean_text(item.findtext('description') or '')
+                if not description:
+                    content = item.find('content:encoded', namespaces={'content': 'http://purl.org/rss/1.0/modules/content/'})
+                    if content is not None:
+                        description = clean_text(content.text or '')
                 
+                lead = (description or title).strip()
+                if not lead:
+                    continue
+                
+                # Ограничение на длину
                 sentences = re.split(r'(?<=[.!?])\s+', lead)
-                if len(sentences) > 2:
-                    lead = ' '.join(sentences[:2]).rstrip() + "…"
-                else:
-                    lead = lead.rstrip()
+                lead = ' '.join(sentences[:2]).rstrip() + ("…" if len(sentences) > 2 else "")
                 
                 ru_title = translate_to_russian(title)
                 ru_lead = translate_to_russian(lead)
@@ -208,6 +226,8 @@ def fetch_news():
                 result.append({"msg": msg, "link": link, "title": title})
         except Exception as e:
             log.error(f"❌ RSS {src['name']}: {e}")
+
+    return result
 
     # === 2. Обработка HTML-источников ===
     for src in HTML_SOURCES:
