@@ -3,7 +3,6 @@ services:
     name: news-bot
     env: python
     plan: free
-    region: frankfurt
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python bot.py"
     envVars:
@@ -14,4 +13,3 @@ services:
       - key: DATABASE_URL
         sync: false
     healthCheckPath: /
-    healthCheckInterval: 300
