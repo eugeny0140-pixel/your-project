@@ -1,11 +1,29 @@
-# Telegram News Bot с Supabase
+# News Bot для Telegram
 
-Бот для мониторинга RSS и HTML-источников, фильтрации по ключевым словам и отправки новостей в Telegram канал.
+Этот бот автоматически собирает и отправляет релевантные новости в ваш Telegram-канал с более чем 30 источников, включая RSS и HTML-страницы.
+
+## Особенности
+
+- 📡 Поддержка как RSS-лент, так и HTML-страниц
+- 🔍 Фильтрация новостей по 100+ ключевым словам (Россия, Украина, война, санкции, криптовалюта, пандемии)
+- 🌐 Перевод заголовков и лидов на русский язык
+- 📊 Отслеживание уже отправленных новостей через Supabase
+- ⏰ Автоматическая проверка каждые 14 минут
+- 🔄 Keep-alive проверки для предотвращения сна на Render Free Tier
+
+## Требования
+
+- Supabase аккаунт (бесплатная база данных)
+- Telegram бот (создайте через @BotFather)
+- Render аккаунт (бесплатный хостинг)
 
 ## Настройка
 
-1. Создайте проект в [Supabase](https://supabase.com)
-2. Создайте таблицу `seen_items`:
+### 1. Создание базы данных в Supabase
+
+1. Зарегистрируйтесь на [Supabase](https://supabase.com)
+2. Создайте новый проект
+3. Создайте таблицу `seen_items` со следующей структурой:
    ```sql
    CREATE TABLE seen_items (
        id SERIAL PRIMARY KEY,
@@ -13,5 +31,3 @@
        title_hash TEXT UNIQUE,
        created_at TIMESTAMP DEFAULT NOW()
    );
-   CREATE INDEX idx_seen_link ON seen_items(link);
-   CREATE INDEX idx_seen_title_hash ON seen_items(title_hash);
